@@ -21,6 +21,8 @@ data CNF = CNF
   } deriving (Show)
 
 clauseHasVar :: Variable -> Clause -> Bool
+clauseHasVar 0 [] = True
+clauseHasVar 0 _ = False
 clauseHasVar _ [] = False
 clauseHasVar var (lit:lits) = (abs lit == var) || clauseHasVar var lits
 
@@ -40,28 +42,30 @@ resolveAll var (c:cs) = mapMaybe (resolve var c) cs ++ resolveAll var cs
 
 -- DP --------------------------------------------------------------------------
 
+-- Bucket with variable label, contains only clauses that contain that variable.
+-- Bucket "0" represents the bucket of empty clauses.
 data Bucket = Bucket
   { buk_var :: Variable
   , buk_clauses :: [Clause]
   } deriving (Show)
 
--- TODO: No need for CNF, just clauses.
--- Create and fill buckets in order of vars. For each clause, place clause in
--- first bucket whose variable is in clause.
-fillBuckets :: [Variable] -> CNF -> [Bucket]
-fillBuckets vars (CNF _ _ []) = map (\v -> Bucket v []) vars
+-- Create and fill buckets in order of vars.
+-- For each clause, place clause in first bucket whose variable is in clause.
+fillBuckets :: [Variable] -> [Clause] -> [Bucket]
+fillBuckets vars [] = map (\v -> Bucket v []) vars
 fillBuckets [] _ = assert (False) []  -- TODO: ERROR: clauses remain
-fillBuckets (v:vars) (CNF _ _ clauses) =
-  let (with, without) = partition (clauseHasVar v) clauses in
-    Bucket v with : fillBuckets vars (CNF 0 0 without)
+fillBuckets (v:vars) clauses =
+  let (clauses_with, clauses_without) = partition (clauseHasVar v) clauses
+  in Bucket v clauses_with : fillBuckets vars clauses_without
 
 -- Insert clause into buckets such that clause is placed into the first bucket
 -- in list which represents a variable that is in clause.
 insertClause :: Clause -> [Bucket] -> [Bucket]
-insertClause [] _ = trace "error: attempted to insert empty clause" []
-insertClause _ [] = trace "error: no bucket found for clause" []
+insertClause clause [] =
+  trace ("error: no bucket found for clause: " ++ show clause) []
 insertClause clause (b:buckets) =
-  if clauseHasVar (buk_var b) clause
+  if (clause == [] && (buk_var b) == 0)
+     || clauseHasVar (buk_var b) clause
   then Bucket (buk_var b) (clause : (buk_clauses b)) : buckets
   else b : insertClause clause buckets
 
@@ -72,11 +76,10 @@ insertClauses (c:clauses) buckets =
   in insertClauses clauses new_buks
 
 resolveBuckets :: [Bucket] -> [Bucket]
-resolveBuckets [] = []  -- TODO: ERROR if resolvents remain?
+resolveBuckets [] = []
 resolveBuckets (b:buckets) =
   let rs = resolveAll (buk_var b) (buk_clauses b)
   in b : resolveBuckets (insertClauses rs buckets)
-  --in trace (show rs) (b : resolveBuckets (insertClauses rs buckets))
 
 -- Parser ----------------------------------------------------------------------
 
@@ -133,7 +136,7 @@ main' str = do
       print cnf
       newline
 
-      let buckets = fillBuckets [1..(cnf_n_vars cnf)] cnf
+      let buckets = fillBuckets [1..(cnf_n_vars cnf)] (cnf_clauses cnf)
       putStrLn "Initial Buckets: "
       mapM_ print buckets
       newline
