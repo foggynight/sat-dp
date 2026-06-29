@@ -2,6 +2,7 @@
 -- Copyright (C) 2026 Robert Coffey
 
 import Control.Exception (assert)
+import Control.Monad.Extra (mapMaybeM)
 import Data.Char (isSpace, toLower)
 import Data.Int (Int64)
 import Data.List (nub, partition)
@@ -32,24 +33,26 @@ clauseIsTautology :: Clause -> Bool
 clauseIsTautology [] = False
 clauseIsTautology (l:lits) = elem (-l) lits || clauseIsTautology lits
 
--- TODO: Add trace messages to show resolution.
--- Generate var-resolvent given two clauses.
--- Removes duplicate literals from resolvent.
--- Returns Nothing when resolvent is tautology.
-resolve :: Variable -> Clause -> Clause -> Maybe Clause
-resolve var c1 c2 =
+-- Generate var-resolvent given two clauses. Removes duplicate literals and
+-- returns Nothing if resolvent is tautology.
+resolve :: Variable -> Clause -> Clause -> IO (Maybe Clause)
+resolve var c1 c2 = do
   if (elem var c1 && elem (-var) c2) || (elem (-var) c1 && elem var c2)
   then let f = not . litHasVar var
            resolvent = nub $ filter f (c1 ++ c2)
        in if clauseIsTautology resolvent
-          then Nothing
-          else Just resolvent
-  else Nothing
+          then do putStrLn ("Tautology: " ++ show resolvent)
+                  pure Nothing
+          else pure $ Just resolvent
+  else pure Nothing
 
 -- Generate all var-resolvents given a list of clauses.
-resolveAll :: Variable -> [Clause] -> [Clause]
-resolveAll _ [] = []
-resolveAll var (c:cs) = mapMaybe (resolve var c) cs ++ resolveAll var cs
+resolveAll :: Variable -> [Clause] -> IO [Clause]
+resolveAll _ [] = pure []
+resolveAll var (c:cs) = do
+  var_resolvents <- mapMaybeM (resolve var c) cs
+  rest_resolvents <- resolveAll var cs
+  pure $ var_resolvents ++ rest_resolvents
 
 -- DP --------------------------------------------------------------------------
 
@@ -85,11 +88,12 @@ insertClauses (c:clauses) buckets =
   let new_buks = (insertClause c buckets)
   in insertClauses clauses new_buks
 
-resolveBuckets :: [Bucket] -> [Bucket]
-resolveBuckets [] = []
-resolveBuckets (b:buckets) =
-  let rs = resolveAll (buk_var b) (buk_clauses b)
-  in b : resolveBuckets (insertClauses rs buckets)
+resolveBuckets :: [Bucket] -> IO [Bucket]
+resolveBuckets [] = pure []
+resolveBuckets (b:buckets) = do
+  rs <- resolveAll (buk_var b) (buk_clauses b)
+  rest <- resolveBuckets (insertClauses rs buckets)
+  pure $ b : rest
 
 -- Parser ----------------------------------------------------------------------
 
@@ -152,7 +156,7 @@ main' str = do
       newline
 
       putStrLn "Deriving resolvents..."
-      let res_buks = resolveBuckets buckets
+      res_buks <- resolveBuckets buckets
       newline
 
       putStrLn "Resolved Buckets: "
@@ -160,9 +164,6 @@ main' str = do
       newline
 
       let rev_buks = reverse res_buks
-      putStrLn "Reversed Buckets: "
-      mapM_ print rev_buks
-      newline
 
       if (buk_clauses (head rev_buks) == [])
       then putStrLn "SAT"
