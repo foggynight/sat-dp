@@ -4,7 +4,7 @@
 import Control.Exception (assert)
 import Data.Char (isSpace, toLower)
 import Data.Int (Int64)
-import Data.List (partition)
+import Data.List (nub, partition)
 import Data.Maybe (mapMaybe)
 import Debug.Trace (trace)
 import Text.Read (readMaybe)
@@ -20,20 +20,31 @@ data CNF = CNF
   , cnf_clauses :: [Clause]
   } deriving (Show)
 
+litHasVar :: Variable -> Literal -> Bool
+litHasVar var lit = (var == abs lit)
+
 clauseHasVar :: Variable -> Clause -> Bool
-clauseHasVar 0 [] = True
-clauseHasVar 0 _ = False
+clauseHasVar 0 clause = (clause == [])
 clauseHasVar _ [] = False
 clauseHasVar var (lit:lits) = (abs lit == var) || clauseHasVar var lits
 
+clauseIsTautology :: Clause -> Bool
+clauseIsTautology [] = False
+clauseIsTautology (l:lits) = elem (-l) lits || clauseIsTautology lits
+
+-- TODO: Add trace messages to show resolution.
 -- Generate var-resolvent given two clauses.
+-- Removes duplicate literals from resolvent.
+-- Returns Nothing when resolvent is tautology.
 resolve :: Variable -> Clause -> Clause -> Maybe Clause
 resolve var c1 c2 =
-  if elem var c1 && elem (-var) c2
-  then Just $ (filter (/= var) c1) ++ (filter (/= (-var)) c2)
-  else if elem (-var) c1 && elem var c2
-       then Just $ (filter (/= (-var)) c1) ++ (filter (/= var) c2)
-       else Nothing
+  if (elem var c1 && elem (-var) c2) || (elem (-var) c1 && elem var c2)
+  then let f = not . litHasVar var
+           resolvent = nub $ filter f (c1 ++ c2)
+       in if clauseIsTautology resolvent
+          then Nothing
+          else Just resolvent
+  else Nothing
 
 -- Generate all var-resolvents given a list of clauses.
 resolveAll :: Variable -> [Clause] -> [Clause]
@@ -64,8 +75,7 @@ insertClause :: Clause -> [Bucket] -> [Bucket]
 insertClause clause [] =
   trace ("error: no bucket found for clause: " ++ show clause) []
 insertClause clause (b:buckets) =
-  if (clause == [] && (buk_var b) == 0)
-     || clauseHasVar (buk_var b) clause
+  if clauseHasVar (buk_var b) clause
   then Bucket (buk_var b) (clause : (buk_clauses b)) : buckets
   else b : insertClause clause buckets
 
@@ -136,14 +146,27 @@ main' str = do
       print cnf
       newline
 
-      let buckets = fillBuckets [1..(cnf_n_vars cnf)] (cnf_clauses cnf)
+      let buckets = fillBuckets ([1..(cnf_n_vars cnf)] ++ [0]) (cnf_clauses cnf)
       putStrLn "Initial Buckets: "
       mapM_ print buckets
       newline
 
+      putStrLn "Deriving resolvents..."
       let res_buks = resolveBuckets buckets
+      newline
+
       putStrLn "Resolved Buckets: "
       mapM_ print res_buks
+      newline
+
+      let rev_buks = reverse res_buks
+      putStrLn "Reversed Buckets: "
+      mapM_ print rev_buks
+      newline
+
+      if (buk_clauses (head rev_buks) == [])
+      then putStrLn "SAT"
+      else putStrLn "UNSAT"
 
 main :: IO ()
 main = do
