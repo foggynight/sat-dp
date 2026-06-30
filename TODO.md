@@ -1,0 +1,2 @@
+- [ ] update README: lang, build, usage, input/output format
+- [ ] output: add DIMACS solution format
