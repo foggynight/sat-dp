@@ -27,6 +27,7 @@ instance Show CNF where
 litHasVar :: Variable -> Literal -> Bool
 litHasVar var lit = (var == abs lit)
 
+-- When called with var = 0, checks if clause is the empty clause.
 clauseHasVar :: Variable -> Clause -> Bool
 clauseHasVar 0 clause = (clause == [])
 clauseHasVar _ [] = False
@@ -65,6 +66,7 @@ resolveAll var (c:cs) = do
   pure $ var_resolvents ++ rest_resolvents
 
 -- DP --------------------------------------------------------------------------
+-- NOTE: All functions assume "0" bucket is at the end of bucket list.
 
 -- Bucket with variable label, contains only clauses that contain that variable.
 -- Bucket "0" represents the bucket of empty clauses.
@@ -86,27 +88,67 @@ fillBuckets (v:vars) clauses =
   in Bucket v clauses_with : fillBuckets vars clauses_without
 
 -- Insert clause into buckets such that clause is placed into the first bucket
--- in list which represents a variable that is in clause.
-insertClause :: Clause -> [Bucket] -> [Bucket]
-insertClause clause [] =
+-- in list which represents a variable that is in clause, inserts empty clause
+-- into "0" bucket.
+bucketInsertClause :: Clause -> [Bucket] -> [Bucket]
+bucketInsertClause clause [] =
   trace ("error: no bucket found for clause: " ++ show clause) []
-insertClause clause (b:buckets) =
+bucketInsertClause clause (b:buckets) =
   if clauseHasVar (buk_var b) clause
   then Bucket (buk_var b) (clause : (buk_clauses b)) : buckets
-  else b : insertClause clause buckets
+  else b : bucketInsertClause clause buckets
 
-insertClauses :: [Clause] -> [Bucket] -> [Bucket]
-insertClauses [] buckets = buckets
-insertClauses (c:clauses) buckets =
-  let new_buks = (insertClause c buckets)
-  in insertClauses clauses new_buks
+bucketInsertClauses :: [Clause] -> [Bucket] -> [Bucket]
+bucketInsertClauses [] buckets = buckets
+bucketInsertClauses (c:clauses) buckets =
+  let new_buks = (bucketInsertClause c buckets)
+  in bucketInsertClauses clauses new_buks
 
 resolveBuckets :: [Bucket] -> IO [Bucket]
 resolveBuckets [] = pure []
 resolveBuckets (b:buckets) = do
   rs <- resolveAll (buk_var b) (buk_clauses b)
-  rest <- resolveBuckets (insertClauses rs buckets)
+  rest <- resolveBuckets (bucketInsertClauses rs buckets)
   pure $ b : rest
+
+assignsSatisfy :: [Literal] -> Clause -> Bool
+assignsSatisfy _ [] = False
+assignsSatisfy assigns (lit:lits)
+  | elem lit assigns = True
+  | otherwise        = assignsSatisfy assigns lits
+
+assignsSatisfyAll :: [Literal] -> [Clause] -> Bool
+assignsSatisfyAll assigns clauses =
+  and $ map (\c -> assignsSatisfy assigns c) clauses
+
+-- Find valid assignment of variable, given list of previous assignments and
+-- clause. Returns literal representing variable assignment.
+findAssign :: Variable -> [Literal] -> [Clause] -> Literal
+findAssign var prev clauses
+  | assignsSatisfyAll (var : prev) clauses = var
+  | otherwise                              = -var
+
+-- Buckets must be in reverse order of variable ordering, "0" bucket dropped.
+extractSolution' :: [Bucket] -> [Literal] -> [Literal]
+extractSolution' [] assigns = assigns
+extractSolution' ((Bucket var clauses) : buckets) assigns =
+  let assign = case clauses of
+                 [] -> var  -- Bucket empty, assume positive assignment.
+                 cs -> (findAssign var assigns cs)
+  in extractSolution' buckets (assign : assigns)
+
+-- Extract satisfying assignment from list of buckets containing clauses of
+-- fully resolved CNF. If "0" bucket contains empty clauses, returns Nothing as
+-- CNF is unsatisfiable.
+extractSolution :: [Bucket] -> Maybe [Literal]
+extractSolution [] = trace "error: no buckets to extract solution" Nothing
+extractSolution [_zero_buk] = Just []
+extractSolution buckets =
+  case reverse buckets of
+    (zero_buk : rest_buks) -> case buk_clauses zero_buk of
+                                [] -> Just $ extractSolution' rest_buks []
+                                _  -> Nothing
+    _ -> trace "error: reversed buckets failed pattern match" Nothing
 
 -- Parser ----------------------------------------------------------------------
 
@@ -163,6 +205,7 @@ main' str = do
       print cnf
       newline
 
+      -- TODO: Handle variable ordering.
       let buckets = fillBuckets ([1..(cnf_n_vars cnf)] ++ [0]) (cnf_clauses cnf)
       putStrLn "Initial Buckets: "
       mapM_ print buckets
@@ -176,11 +219,10 @@ main' str = do
       mapM_ print res_buks
       newline
 
-      let rev_buks = reverse res_buks
-
-      if (buk_clauses (head rev_buks) == [])
-      then putStrLn "SAT"
-      else putStrLn "UNSAT"
+      let solution = extractSolution res_buks
+      case solution of
+        Nothing -> putStrLn "UNSAT"
+        Just lits -> putStr $ "SAT: " ++ (show lits) ++ "\n"
 
 main :: IO ()
 main = do
