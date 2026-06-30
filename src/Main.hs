@@ -17,9 +17,12 @@ type Literal = Variable  -- variable + sign
 type Clause = [Literal]
 data CNF = CNF
   { cnf_n_vars :: Int64
-  , cnf_n_clauses :: Int64
+  , _cnf_n_clauses :: Int64
   , cnf_clauses :: [Clause]
-  } deriving (Show)
+  }
+
+instance Show CNF where
+  show cnf = show (cnf_clauses cnf)
 
 litHasVar :: Variable -> Literal -> Bool
 litHasVar var lit = (var == abs lit)
@@ -33,18 +36,25 @@ clauseIsTautology :: Clause -> Bool
 clauseIsTautology [] = False
 clauseIsTautology (l:lits) = elem (-l) lits || clauseIsTautology lits
 
+-- TODO: Rewrite such that monadic action handled outside? This should be pure.
 -- Generate var-resolvent given two clauses. Removes duplicate literals and
 -- returns Nothing if resolvent is tautology.
 resolve :: Variable -> Clause -> Clause -> IO (Maybe Clause)
 resolve var c1 c2 = do
-  if (elem var c1 && elem (-var) c2) || (elem (-var) c1 && elem var c2)
-  then let f = not . litHasVar var
-           resolvent = nub $ filter f (c1 ++ c2)
-       in if clauseIsTautology resolvent
-          then do putStrLn ("Tautology: " ++ show resolvent)
-                  pure Nothing
-          else pure $ Just resolvent
-  else pure Nothing
+  result <- do
+    if (elem var c1 && elem (-var) c2) || (elem (-var) c1 && elem var c2)
+    then do
+      putStr $ (show var) ++ ": " ++ (show c1) ++ " " ++ (show c2) ++ " -> "
+      let f = not . litHasVar var
+      let resolvent = nub $ filter f (c1 ++ c2)
+      putStr $ show resolvent
+      if clauseIsTautology resolvent
+      then do putStr (" (tautology)\n")
+              pure Nothing
+      else do newline
+              pure $ Just resolvent
+    else do pure Nothing
+  pure result
 
 -- Generate all var-resolvents given a list of clauses.
 resolveAll :: Variable -> [Clause] -> IO [Clause]
@@ -61,7 +71,10 @@ resolveAll var (c:cs) = do
 data Bucket = Bucket
   { buk_var :: Variable
   , buk_clauses :: [Clause]
-  } deriving (Show)
+  }
+
+instance Show Bucket where
+  show buk = show (buk_var buk) ++ ": " ++ show (buk_clauses buk)
 
 -- Create and fill buckets in order of vars.
 -- For each clause, place clause in first bucket whose variable is in clause.
