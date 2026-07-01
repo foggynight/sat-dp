@@ -8,7 +8,13 @@ import Data.Int (Int64)
 import Data.List (nub, partition)
 import Data.Maybe (mapMaybe)
 import Debug.Trace (trace)
+import System.Environment (getArgs)
 import Text.Read (readMaybe)
+
+-- Util ------------------------------------------------------------------------
+
+newline :: IO ()
+newline = putStrLn ""
 
 -- CNF -------------------------------------------------------------------------
 
@@ -203,9 +209,6 @@ parseDIMACS file_str =
 
 -- Main ------------------------------------------------------------------------
 
-newline :: IO ()
-newline = putStrLn ""
-
 main' :: String -> IO ()
 main' str = do
   let maybe_cnf = parseDIMACS str
@@ -232,10 +235,17 @@ main' str = do
 
       let solution = extractSolution res_buks
       case solution of
-        Nothing -> putStrLn "UNSAT"
+        Nothing   -> putStrLn "UNSAT"
         Just lits -> putStr $ "SAT: " ++ (show lits) ++ "\n"
 
 main :: IO ()
 main = do
-  input <- getContents
-  main' input
+  args <- getArgs
+  let argc = length args
+  if argc > 1
+  then putStrLn $ "error: too many arguments"
+  else do
+    input <- if argc == 0
+             then getContents
+             else readFile (head args)
+    main' input

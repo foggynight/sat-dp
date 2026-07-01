@@ -22,12 +22,10 @@ TODO
 
 ## Usage
 
-TODO: Add file argument.
-
 ```sh
-SatDP
+SatDP [FILE]
 ```
 
-- Reads DIMACS CNF file format from stdin.
+- FILE: Input DIMACS CNF file, if not provided reads from stdin.
 - Outputs log messages describing solving process.
 - Outputs SAT/UNSAT, and list of satisfying variable assignments.
