@@ -5,9 +5,10 @@ import Control.Exception (assert)
 import Control.Monad.Extra (mapMaybeM)
 import Data.Char (isSpace, toLower)
 import Data.Int (Int64)
-import Data.List (nub, partition)
+import Data.List (nub, partition, sortOn)
 import Data.Maybe (mapMaybe)
 import Debug.Trace (trace)
+import Options.Applicative -- TODO
 import System.Environment (getArgs)
 import Text.Read (readMaybe)
 
@@ -15,6 +16,9 @@ import Text.Read (readMaybe)
 
 newline :: IO ()
 newline = putStrLn ""
+
+count :: Eq a => a -> [a] -> Int
+count x = length . filter (== x)
 
 -- CNF -------------------------------------------------------------------------
 
@@ -83,6 +87,15 @@ data Bucket = Bucket
 
 instance Show Bucket where
   show buk = show (buk_var buk) ++ ": " ++ show (buk_clauses buk)
+
+varOrderNumeric :: Variable -> [Variable]
+varOrderNumeric max_var = [1 .. max_var] ++ [0]
+
+varOrderFewestClauses :: Variable -> [Clause] -> [Variable]
+varOrderFewestClauses max_var clauses =
+  let occurs = map count_occurs [1 .. max_var] in
+    (map fst $ sortOn snd occurs) ++ [0]
+  where count_occurs var = (var, sum $ map ((count var) . (map abs)) clauses)
 
 -- Create and fill buckets in order of vars.
 -- For each clause, place clause in first bucket whose variable is in clause.
@@ -220,7 +233,8 @@ main' str = do
       newline
 
       -- TODO: Handle variable ordering.
-      let buckets = fillBuckets ([1..(cnf_n_vars cnf)] ++ [0]) (cnf_clauses cnf)
+      let var_order = varOrderFewestClauses (cnf_n_vars cnf) (cnf_clauses cnf)
+      let buckets = fillBuckets var_order (cnf_clauses cnf)
       putStrLn "Initial Buckets: "
       mapM_ print buckets
       newline
