@@ -2,11 +2,13 @@
 -- Copyright (C) 2026 Robert Coffey
 
 import Control.Exception (assert)
+import Control.Monad (when)
 import Control.Monad.Extra (mapMaybeM)
 import Data.Char (isSpace, toLower)
 import Data.Int (Int64)
 import Data.List (nub, partition, sortOn)
 import Data.Maybe (mapMaybe)
+import Data.Ord (Down(..))
 import Debug.Trace (trace)
 import Options.Applicative
 import Text.Read (readMaybe)
@@ -235,12 +237,17 @@ configParser = Config
     <> showDefault
     <> help "Filename of input DIMACS CNF file." )
 
-type VarOrder = CNF -> [Variable]
+type VarOrderF = CNF -> [Variable]
 
-varOrderNumeric :: VarOrder
+-- TODO: Add varOrder constructor function which takes weight function, and
+-- rewrite to use varOrder constructor?
+
+-- Numeric: Select variables in numerical order.
+varOrderNumeric :: VarOrderF
 varOrderNumeric cnf = [1 .. (cnf_n_vars cnf)] ++ [0]
 
-varOrderFewestClauses :: VarOrder
+-- Fewest Clauses: Select variable which occurs in the fewest clauses.
+varOrderFewestClauses :: VarOrderF
 varOrderFewestClauses cnf =
   let clauses = (cnf_clauses cnf)
       occurs = map (count_occurs clauses) [1 .. (cnf_n_vars cnf)] in
@@ -248,7 +255,18 @@ varOrderFewestClauses cnf =
   where count_occurs clauses var =
           (var, sum $ map ((count var) . (map abs)) clauses)
 
-main' :: DIMACS_CNF -> VarOrder -> IO ()
+-- Jerowslow-Wang: Variable exponentially higher weight in shorter clause, more
+-- clauses higher weight, select variables to maximize weight.
+varOrderJeroslowWang :: VarOrderF
+varOrderJeroslowWang (CNF n_vars _ clauses) =
+  let vars = [1 .. n_vars]
+      vws = zip vars (map calc_weight vars)
+  in (map fst $ sortOn (Down . snd) vws) ++ [0]
+  where calc_weight var =
+          sum $ map (\c -> 2 ^^ (- (length c)) :: Double)
+                $ filter (clauseHasVar var) clauses
+
+main' :: DIMACS_CNF -> VarOrderF -> IO ()
 main' dimacs_cnf vo_func = do
   let maybe_cnf = parseDIMACS dimacs_cnf
   case maybe_cnf of
@@ -259,6 +277,8 @@ main' dimacs_cnf vo_func = do
       newline
 
       let var_order = vo_func cnf
+      when (last var_order /= 0) $ do
+        error "error: variable order doesn't end with 0"
       let buckets = fillBuckets var_order (cnf_clauses cnf)
 
       putStrLn "Initial Buckets: "
@@ -281,9 +301,10 @@ main' dimacs_cnf vo_func = do
 main :: IO ()
 main = do
   config <- execParser opts
-  let var_order = case conf_var_order config of
+  let var_order = case map toLower (conf_var_order config) of
                     "numeric" -> varOrderNumeric
                     "fewest"  -> varOrderFewestClauses
+                    "jw"      -> varOrderJeroslowWang
                     _         -> trace "error: invalid variable order argument"
                                        varOrderNumeric
   dimacs_cnf <- case conf_cnf_file config of
