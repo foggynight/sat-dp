@@ -108,10 +108,12 @@ findBucket clause (b:bs) =
 bucketsInsertClause :: Clause -> [Bucket] -> [Bucket]
 bucketsInsertClause clause [] =
   trace ("error: no bucket found for clause: " ++ show clause) []
-bucketsInsertClause clause (b:buckets) =
-  if clauseHasVar (buk_var b) clause
-  then Bucket (buk_var b) (clause : (buk_clauses b)) : buckets
-  else b : bucketsInsertClause clause buckets
+bucketsInsertClause clause ((Bucket var clauses):buckets) =
+  if clauseHasVar var clause
+  then if elem clause clauses
+       then (Bucket var clauses) : buckets
+       else (Bucket var (clause : clauses)) : buckets
+  else (Bucket var clauses) : bucketsInsertClause clause buckets
 
 bucketsInsertClauses :: [Clause] -> [Bucket] -> [Bucket]
 bucketsInsertClauses [] buckets = buckets
