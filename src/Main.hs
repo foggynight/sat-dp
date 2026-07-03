@@ -2,8 +2,7 @@
 -- Copyright (C) 2026 Robert Coffey
 
 import Control.Exception (assert)
-import Control.Monad (when)
-import Control.Monad.Extra (mapMaybeM)
+import Control.Monad (liftM2, when)
 import Data.Char (isSpace, toLower)
 import Data.List (nub, partition, sortOn)
 import Data.Maybe (mapMaybe)
@@ -19,6 +18,9 @@ newline = putStrLn ""
 
 count :: Eq a => a -> [a] -> Int
 count x = length . filter (== x)
+
+consM :: Monad m => m a -> m [a] -> m [a]
+consM = liftM2 (:)
 
 -- CNF -------------------------------------------------------------------------
 
@@ -40,6 +42,10 @@ data Resolvent = Resolvent
   , _res_res :: Clause  -- resolvent clause
   }
 
+instance Show Resolvent where
+  show (Resolvent p1 p2 res) =
+    concat [(show p1), " ", (show p2), " -> ", (show res)]
+
 litHasVar :: Variable -> Literal -> Bool
 litHasVar var lit = (var == abs lit)
 
@@ -58,8 +64,8 @@ resolve :: Variable -> Clause -> Clause -> Maybe Resolvent
 resolve var c1 c2 = do
   if (elem var c1 && elem (-var) c2) || (elem (-var) c1 && elem var c2)
   then let f = not . litHasVar var
-           res_clause = nub $ filter f (c1 ++ c2)
-       in Just $ Resolvent c1 c2 res_clause
+           res = nub $ filter f (c1 ++ c2)
+       in Just $ Resolvent c1 c2 res
   else Nothing
 
 -- Generate all var-resolvents given a list of clauses. Returns tuple of
@@ -91,57 +97,41 @@ fillBuckets (v:vars) clauses =
   let (clauses_with, clauses_without) = partition (clauseHasVar v) clauses
   in Bucket v clauses_with : fillBuckets vars clauses_without
 
-findBucket :: Clause -> [Bucket] -> Maybe Bucket
-findBucket _ [] = Nothing
-findBucket [] (b:bs) =
-  if (buk_var b) == 0
-  then Just b
-  else findBucket [] bs
-findBucket clause (b:bs) =
-  if clauseHasVar (buk_var b) clause
-  then Just b
-  else findBucket clause bs
+-- Insert resolvent into buckets such that resolvent clause is placed into the
+-- first bucket in list which represents a variable that is in clause, inserts
+-- empty clause into "0" bucket.
+-- NOTE: Uses Resolvent instead of Clause only for log messages.
+bucketsInsertResolvent :: Resolvent -> [Bucket] -> IO [Bucket]
+bucketsInsertResolvent res [] = do  -- TODO: What if res taut.? Still prints...
+  putStrLn $ show res ++ " (failed to find bucket)"
+  pure []
+bucketsInsertResolvent (Resolvent p1 p2 res) ((Bucket var cs):bs) = do
+  if clauseIsTautology res
+  then do putStrLn $ show orig_res ++ " (tautology)"
+          pure orig_buks
+  else if clauseHasVar var res
+       then if elem res cs
+            then do putStrLn $ concat [show orig_res, " (duplicate in bucket: ", show var, ")"]
+                    pure orig_buks
+            else do putStrLn $ concat [show orig_res, " (adding to bucket: ", show var, ")"]
+                    pure $ (Bucket var (res : cs)) : bs
+       else pure (Bucket var cs) `consM` bucketsInsertResolvent orig_res bs
+  where orig_res = (Resolvent p1 p2 res)
+        orig_buks = (Bucket var cs) : bs
 
--- Insert clause into buckets such that clause is placed into the first bucket
--- in list which represents a variable that is in clause, inserts empty clause
--- into "0" bucket.
-bucketsInsertClause :: Clause -> [Bucket] -> [Bucket]
-bucketsInsertClause clause [] =
-  trace ("error: no bucket found for clause: " ++ show clause) []
-bucketsInsertClause clause ((Bucket var clauses):buckets) =
-  if clauseHasVar var clause
-  then if elem clause clauses
-       then (Bucket var clauses) : buckets
-       else (Bucket var (clause : clauses)) : buckets
-  else (Bucket var clauses) : bucketsInsertClause clause buckets
+bucketsInsertResolvents :: [Resolvent] -> [Bucket] -> IO [Bucket]
+bucketsInsertResolvents [] bs = pure bs
+bucketsInsertResolvents (r:rs) bs = do
+  new_bs <- (bucketsInsertResolvent r bs)
+  bucketsInsertResolvents rs new_bs
 
-bucketsInsertClauses :: [Clause] -> [Bucket] -> [Bucket]
-bucketsInsertClauses [] buckets = buckets
-bucketsInsertClauses (c:clauses) buckets =
-  let new_buks = (bucketsInsertClause c buckets)
-  in bucketsInsertClauses clauses new_buks
-
--- TODO: Do this only in "verbose" mode.
 -- Skips tautological resolvent clauses.
 resolveBuckets :: [Bucket] -> IO [Bucket]
 resolveBuckets [] = pure []
-resolveBuckets (b:buckets) = do
+resolveBuckets (b:bs) = do
   let rs = resolveAll (buk_var b) (buk_clauses b)
-  rs_clauses <- mapMaybeM
-    (\(Resolvent p1 p2 res) -> do
-      putStr $ concat [(show p1), " ", (show p2), " -> ", (show res)]
-      if clauseIsTautology res
-      then do putStrLn " (tautology)" ; pure Nothing
-      else do
-        case findBucket res buckets of
-          Nothing -> do
-            putStrLn " (failed to find bucket)"
-            pure Nothing
-          Just (Bucket var _) -> do
-            putStrLn $ concat [" (adding to bucket: ", show var, ")" ]
-            pure $ Just res
-    ) rs
-  rest <- resolveBuckets (bucketsInsertClauses rs_clauses buckets)
+  new_bs <- bucketsInsertResolvents rs bs
+  rest <- resolveBuckets new_bs
   pure $ b : rest
 
 assignsSatisfy :: [Literal] -> Clause -> Bool
@@ -310,12 +300,12 @@ main' dimacs_cnf vo_func = do
       mapM_ print init_buks
       newline
 
-      putStrLn "Deriving resolvents (skips tautological clauses)..."
+      putStrLn "Deriving resolvents..."
       res_buks <- resolveBuckets init_buks
       let res_cnt =
             (sum $ map (length . buk_clauses) res_buks)
             - (cnf_n_clauses cnf)
-      putStr $ "Number of resolvents added to buckets: " ++ show res_cnt
+      putStr $ "Resolvents added to buckets: " ++ show res_cnt
       newline; newline
 
       putStrLn "Resolved Buckets: "
