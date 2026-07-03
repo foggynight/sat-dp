@@ -1,7 +1,9 @@
-# sat-dp
+# sat-hs
 
-SAT solver using the DP (Davis-Putnam) algorithm, also known as Directional
-Resolution.
+Various SAT solving algorithms implemented in Haskell.
+
+
+## DP (Davis-Putnam) or Directional Resolution
 
 The DP algorithm uses the resolution rule to eliminate (existentially quantify)
 variables until it derives an empty clause (contradiction), at which point it
@@ -13,14 +15,7 @@ The algorithm is implemented using the "Bucket Elimination" technique described
 in "The DP Algorithm" section of the "Handbook of Satisfiability" 2nd edition.
 
 
-## Build
-
-A Cabal package description file has been provided.
-
-TODO
-
-
-## Usage
+## Usage (TODO)
 
 ```sh
 sat-dp [FILE]

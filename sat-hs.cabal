@@ -1,10 +1,10 @@
 cabal-version:      3.0
-name:               sat-dp
+name:               sat-hs
 version:            0.1.0.0
-synopsis:           SAT solver using the Davis-Putnam or Directional Resolution algorithm.
+synopsis:           Various SAT solving algorithms.
 license:            MIT
 license-file:       LICENSE
--- author:             AUTHOR NAME
+author:             Robert Coffey
 -- maintainer:         MAINTAINER EMAIL
 build-type:         Simple
 extra-doc-files:    README.md, LICENSE
@@ -17,7 +17,7 @@ executable sat-dp
     import:           warnings
     hs-source-dirs:   src
     main-is:          Main.hs
-    -- other-modules: Modules included in this executable, other than Main.
+    other-modules:    CNF, DIMACS, DP, Util
     default-language: Haskell2010
     -- other-extensions: LANGUAGE extensions used by modules in this package.
     -- TODO: Add versions to dependencies.
