@@ -141,8 +141,8 @@ extractSolution buckets =
                                 _  -> Nothing
     _ -> trace "error: reversed buckets failed pattern match" Nothing
 
-solve_DP :: CNF -> [Variable] -> IO ()
-solve_DP cnf var_order = do
+solve_dp :: CNF -> [Variable] -> IO ()
+solve_dp cnf var_order = do
   putStr "Initial CNF: "
   print cnf
   newline
@@ -214,7 +214,7 @@ main = do
     Nothing  -> putStrLn "error: invalid CNF"
     Just cnf -> do
       let var_order = (vo_func cnf) ++ [0]
-      solve_DP cnf var_order
+      solve_dp cnf var_order
 
   where opts = info (configParser <**> helper)
                ( fullDesc
