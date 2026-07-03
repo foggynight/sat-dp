@@ -1,20 +1,22 @@
+-- -*- eval: (setq haskell-process-args-cabal-repl '("sat-dp")) -*-
+-- ... or: M-x haskell-session-change-target, sat-dp
+
 module Main where
 
 import Control.Exception (assert)
 import Control.Monad (when)
 import Data.Char (toLower)
-import Data.List (nub, partition, sortOn)
+import Data.List (nub, partition)
 import Data.Maybe (mapMaybe)
-import Data.Ord (Down(..))
 import Debug.Trace (trace)
 import Options.Applicative
 
 import CNF
 import DIMACS
 import Util
+import VarOrder
 
 -- Resolution ------------------------------------------------------------------
-
 data Resolvent = Resolvent
   { _res_p1 :: Clause   -- parent 1
   , _res_p2 :: Clause   -- parent 2
@@ -140,65 +142,12 @@ extractSolution buckets =
                                 _  -> Nothing
     _ -> trace "error: reversed buckets failed pattern match" Nothing
 
--- Main ------------------------------------------------------------------------
-
-data Config = Config
-  { conf_var_order :: String
-  , conf_cnf_file :: String
-  } deriving (Show)
-
-configParser :: Parser Config
-configParser = Config
-  <$> strOption
-  ( short 'R'
-    <> long "order"
-    <> value "numeric"
-    <> showDefault
-    <> help "Variable ordering strategy." )
-  <*> strArgument
-  ( metavar "CNF_FILE"
-    <> value "--"
-    <> showDefault
-    <> help "Filename of input DIMACS CNF file." )
-
-type VarOrderF = CNF -> [Variable]
-
--- TODO: Add varOrder constructor function which takes weight function, and
--- rewrite to use varOrder constructor?
-
--- Numeric: Select variables in numerical order.
-varOrderNumeric :: VarOrderF
-varOrderNumeric cnf = [1 .. (cnf_n_vars cnf)] ++ [0]
-
--- Fewest Clauses: Select variable which occurs in the fewest clauses.
-varOrderFewestClauses :: VarOrderF
-varOrderFewestClauses cnf =
-  let clauses = (cnf_clauses cnf)
-      occurs = map (count_occurs clauses) [1 .. (cnf_n_vars cnf)] in
-    (map fst $ sortOn snd occurs) ++ [0]
-  where count_occurs clauses var =
-          (var, sum $ map ((count var) . (map abs)) clauses)
-
--- Jerowslow-Wang: Variable exponentially higher weight in shorter clause, more
--- clauses higher weight, select variables to maximize weight.
-varOrderJeroslowWang :: VarOrderF
-varOrderJeroslowWang (CNF n_vars _ clauses) =
-  let vars = [1 .. n_vars]
-      vws = zip vars (map calc_weight vars)
-  in (map fst $ sortOn (Down . snd) vws) ++ [0]
-  where calc_weight var =
-          sum $ map (\c -> 2 ^^ (- (length c)) :: Double)
-                $ filter (clauseHasVar var) clauses
-
-solve_DP :: CNF -> VarOrderF -> IO ()
-solve_DP cnf vo_func = do
+solve_DP :: CNF -> [Variable] -> IO ()
+solve_DP cnf var_order = do
   putStr "Initial CNF: "
   print cnf
   newline
 
-  let var_order = vo_func cnf
-  when (last var_order /= 0) $ do
-    error "error: variable order doesn't end with 0"
   putStr "Variable Order: "
   print var_order
   newline
@@ -225,16 +174,37 @@ solve_DP cnf vo_func = do
     Nothing   -> putStrLn "UNSAT"
     Just lits -> putStr $ "SAT: " ++ (show lits) ++ "\n"
 
+-- Main ------------------------------------------------------------------------
+
+data Config = Config
+  { conf_var_order :: String
+  , conf_cnf_file :: String
+  } deriving (Show)
+
+configParser :: Parser Config
+configParser = Config
+  <$> strOption
+  ( short 'R'
+    <> long "order"
+    <> value "numeric"
+    <> showDefault
+    <> help "Variable ordering strategy." )
+  <*> strArgument
+  ( metavar "CNF_FILE"
+    <> value "--"
+    <> showDefault
+    <> help "Filename of input DIMACS CNF file." )
+
 main :: IO ()
 main = do
   config <- execParser opts
 
-  let var_order = case map toLower (conf_var_order config) of
-                    "numeric" -> varOrderNumeric
-                    "fewest"  -> varOrderFewestClauses
-                    "jw"      -> varOrderJeroslowWang
-                    _         -> trace "error: invalid variable order argument"
-                                       varOrderNumeric
+  let vo_func = case map toLower (conf_var_order config) of
+                  "numeric" -> varOrderNumeric
+                  "fewest"  -> varOrderFewestClauses
+                  "jw"      -> varOrderJeroslowWang
+                  _         -> trace "error: invalid variable order argument"
+                                     varOrderNumeric
 
   dimacs_cnf <- case conf_cnf_file config of
                   "--" -> getContents
@@ -243,9 +213,13 @@ main = do
   let maybe_cnf = parseDIMACS dimacs_cnf
   case maybe_cnf of
     Nothing  -> putStrLn "error: invalid CNF"
-    Just cnf -> do solve_DP cnf var_order
+    Just cnf -> do
+      let var_order = vo_func cnf
+      when (last var_order /= 0) $
+        error "error: variable order doesn't end with 0"
+      solve_DP cnf var_order
 
   where opts = info (configParser <**> helper)
                ( fullDesc
-                 <> header ( "SatDP - SAT solver using DP algorithm implemented"
-                          ++ " with bucket elimination." ) )
+                 <> header ( "sat-dp - SAT solver using DP algorithm"
+                          ++ " implemented with bucket elimination." ) )

@@ -10,6 +10,7 @@ build-type:         Simple
 extra-doc-files:    README.md, LICENSE
 extra-source-files: examples/*.dimacs
 
+
 common warnings
     ghc-options: -Wall
 
@@ -19,17 +20,14 @@ executable sat-dp
     import:           warnings
     hs-source-dirs:   src
     main-is:          Main_DP.hs
-    other-modules:    CNF, DIMACS, Util
+    other-modules:    CNF, DIMACS, Util, VarOrder
     default-language: Haskell2010
-    build-depends:    base,
-                      --extra >= 1.8.1,
-                      optparse-applicative
+    build-depends:    base, optparse-applicative
 
 executable sat-dpll
     import:           warnings
     hs-source-dirs:   src
     main-is:          Main_DPLL.hs
-    other-modules:    CNF, DIMACS, Util
+    other-modules:    CNF, DIMACS, Util, VarOrder
     default-language: Haskell2010
-    build-depends:    base,
-                      optparse-applicative
+    build-depends:    base, optparse-applicative
