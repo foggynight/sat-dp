@@ -7,8 +7,8 @@ license-file:       LICENSE
 -- author:             AUTHOR NAME
 -- maintainer:         MAINTAINER EMAIL
 build-type:         Simple
-extra-doc-files:    README.md
-extra-source-files: examples
+extra-doc-files:    README.md, LICENSE
+extra-source-files: examples/*.dimacs
 
 common warnings
     ghc-options: -Wall
@@ -22,5 +22,5 @@ executable SatDP
     -- other-extensions: LANGUAGE extensions used by modules in this package.
     -- TODO: Add versions to dependencies.
     build-depends:    base,
-                      extra,
+                      extra >= 1.8.1,
                       optparse-applicative

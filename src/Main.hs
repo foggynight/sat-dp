@@ -5,7 +5,6 @@ import Control.Exception (assert)
 import Control.Monad (when)
 import Control.Monad.Extra (mapMaybeM)
 import Data.Char (isSpace, toLower)
-import Data.Int (Int64)
 import Data.List (nub, partition, sortOn)
 import Data.Maybe (mapMaybe)
 import Data.Ord (Down(..))
@@ -23,17 +22,23 @@ count x = length . filter (== x)
 
 -- CNF -------------------------------------------------------------------------
 
-type Variable = Int64    -- variable (> 0)
+type Variable = Int    -- variable (> 0)
 type Literal = Variable  -- variable + sign
 type Clause = [Literal]
 data CNF = CNF
-  { cnf_n_vars :: Int64
-  , _cnf_n_clauses :: Int64
+  { cnf_n_vars :: Int
+  , cnf_n_clauses :: Int
   , cnf_clauses :: [Clause]
   }
 
 instance Show CNF where
   show cnf = show (cnf_clauses cnf)
+
+data Resolvent = Resolvent
+  { _res_p1 :: Clause   -- parent 1
+  , _res_p2 :: Clause   -- parent 2
+  , _res_res :: Clause  -- resolvent clause
+  }
 
 litHasVar :: Variable -> Literal -> Bool
 litHasVar var lit = (var == abs lit)
@@ -48,33 +53,21 @@ clauseIsTautology :: Clause -> Bool
 clauseIsTautology [] = False
 clauseIsTautology (l:lits) = elem (-l) lits || clauseIsTautology lits
 
--- TODO: Rewrite such that monadic action handled outside? This should be pure.
--- Generate var-resolvent given two clauses. Removes duplicate literals and
--- returns Nothing if resolvent is tautology.
-resolve :: Variable -> Clause -> Clause -> IO (Maybe Clause)
+-- Generate var-resolvent given two clauses. Removes duplicate literals.
+resolve :: Variable -> Clause -> Clause -> Maybe Resolvent
 resolve var c1 c2 = do
-  result <- do
-    if (elem var c1 && elem (-var) c2) || (elem (-var) c1 && elem var c2)
-    then do
-      putStr $ (show var) ++ ": " ++ (show c1) ++ " " ++ (show c2) ++ " -> "
-      let f = not . litHasVar var
-      let resolvent = nub $ filter f (c1 ++ c2)
-      putStr $ show resolvent
-      if clauseIsTautology resolvent
-      then do putStr (" (tautology)\n")
-              pure Nothing
-      else do newline
-              pure $ Just resolvent
-    else do pure Nothing
-  pure result
+  if (elem var c1 && elem (-var) c2) || (elem (-var) c1 && elem var c2)
+  then let f = not . litHasVar var
+           res_clause = nub $ filter f (c1 ++ c2)
+       in Just $ Resolvent c1 c2 res_clause
+  else Nothing
 
--- Generate all var-resolvents given a list of clauses.
-resolveAll :: Variable -> [Clause] -> IO [Clause]
-resolveAll _ [] = pure []
-resolveAll var (c:cs) = do
-  var_resolvents <- mapMaybeM (resolve var c) cs
-  rest_resolvents <- resolveAll var cs
-  pure $ var_resolvents ++ rest_resolvents
+-- Generate all var-resolvents given a list of clauses. Returns tuple of
+resolveAll :: Variable -> [Clause] -> [Resolvent]
+resolveAll _ [] = []
+resolveAll var (c:cs) =
+  let var_resolvents = mapMaybe (resolve var c) cs
+  in var_resolvents ++ resolveAll var cs
 
 -- DP --------------------------------------------------------------------------
 -- NOTE: All functions assume "0" bucket is at the end of bucket list.
@@ -98,28 +91,53 @@ fillBuckets (v:vars) clauses =
   let (clauses_with, clauses_without) = partition (clauseHasVar v) clauses
   in Bucket v clauses_with : fillBuckets vars clauses_without
 
+findBucket :: Clause -> [Bucket] -> Maybe Bucket
+findBucket _ [] = Nothing
+findBucket [] (b:bs) =
+  if (buk_var b) == 0
+  then Just b
+  else findBucket [] bs
+findBucket clause (b:bs) =
+  if clauseHasVar (buk_var b) clause
+  then Just b
+  else findBucket clause bs
+
 -- Insert clause into buckets such that clause is placed into the first bucket
 -- in list which represents a variable that is in clause, inserts empty clause
 -- into "0" bucket.
-bucketInsertClause :: Clause -> [Bucket] -> [Bucket]
-bucketInsertClause clause [] =
+bucketsInsertClause :: Clause -> [Bucket] -> [Bucket]
+bucketsInsertClause clause [] =
   trace ("error: no bucket found for clause: " ++ show clause) []
-bucketInsertClause clause (b:buckets) =
+bucketsInsertClause clause (b:buckets) =
   if clauseHasVar (buk_var b) clause
   then Bucket (buk_var b) (clause : (buk_clauses b)) : buckets
-  else b : bucketInsertClause clause buckets
+  else b : bucketsInsertClause clause buckets
 
-bucketInsertClauses :: [Clause] -> [Bucket] -> [Bucket]
-bucketInsertClauses [] buckets = buckets
-bucketInsertClauses (c:clauses) buckets =
-  let new_buks = (bucketInsertClause c buckets)
-  in bucketInsertClauses clauses new_buks
+bucketsInsertClauses :: [Clause] -> [Bucket] -> [Bucket]
+bucketsInsertClauses [] buckets = buckets
+bucketsInsertClauses (c:clauses) buckets =
+  let new_buks = (bucketsInsertClause c buckets)
+  in bucketsInsertClauses clauses new_buks
 
+-- TODO: Do this only in "verbose" mode.
+-- Skips tautological resolvent clauses.
 resolveBuckets :: [Bucket] -> IO [Bucket]
 resolveBuckets [] = pure []
 resolveBuckets (b:buckets) = do
-  rs <- resolveAll (buk_var b) (buk_clauses b)
-  rest <- resolveBuckets (bucketInsertClauses rs buckets)
+  let rs = resolveAll (buk_var b) (buk_clauses b)
+  rs_clauses <- mapMaybeM
+    (\(Resolvent p1 p2 res) -> do
+      putStr $ concat [(show p1), " ", (show p2), " -> ", (show res)]
+      if clauseIsTautology res
+      then do putStrLn " (tautology)" ; pure Nothing
+      else do
+        case findBucket res buckets of
+          Nothing             -> pure Nothing
+          Just (Bucket var _) -> do
+            putStrLn $ concat [" (adding to bucket: ", show var, ")" ]
+            pure $ Just res
+    ) rs
+  rest <- resolveBuckets (bucketsInsertClauses rs_clauses buckets)
   pure $ b : rest
 
 assignsSatisfy :: [Literal] -> Clause -> Bool
@@ -170,7 +188,7 @@ parseFail msg = trace ("error: parse failed: " ++ msg) Nothing
 
 -- Expects string of form "p cnf n_vars n_clauses".
 -- Returns Maybe (n_vars, n_clauses).
-parseDIMACSHeader :: String -> Maybe (Int64, Int64)
+parseDIMACSHeader :: String -> Maybe (Int, Int)
 parseDIMACSHeader line = case words line of
   ["p", "cnf", str_n_vars, str_n_clauses] -> do
     n_vars    <- readMaybe str_n_vars
@@ -279,15 +297,22 @@ main' dimacs_cnf vo_func = do
       let var_order = vo_func cnf
       when (last var_order /= 0) $ do
         error "error: variable order doesn't end with 0"
-      let buckets = fillBuckets var_order (cnf_clauses cnf)
+      putStr "Variable Order: "
+      print var_order
+      newline
 
+      let init_buks = fillBuckets var_order (cnf_clauses cnf)
       putStrLn "Initial Buckets: "
-      mapM_ print buckets
+      mapM_ print init_buks
       newline
 
-      putStrLn "Deriving resolvents..."
-      res_buks <- resolveBuckets buckets
-      newline
+      putStrLn "Deriving resolvents (skips tautological clauses)..."
+      res_buks <- resolveBuckets init_buks
+      let res_cnt =
+            (sum $ map (length . buk_clauses) res_buks)
+            - (cnf_n_clauses cnf)
+      putStr $ "Number of resolvents added to buckets: " ++ show res_cnt
+      newline; newline
 
       putStrLn "Resolved Buckets: "
       mapM_ print res_buks
