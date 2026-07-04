@@ -218,5 +218,5 @@ main = do
 
   where opts = info (configParser <**> helper)
                ( fullDesc
-                 <> header ( "sat-dp - SAT solver using DP algorithm"
+                 <> header ( "sat-dp - SAT solver using the DP algorithm"
                           ++ " implemented with bucket elimination." ) )

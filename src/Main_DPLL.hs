@@ -164,5 +164,4 @@ main = do
 
   where opts = info (configParser <**> helper)
                ( fullDesc
-                 <> header ( "SatDP - SAT solver using DP algorithm implemented"
-                          ++ " with bucket elimination." ) )
+                 <> header "sat-dpll - SAT solver using the DPLL algorithm." )
