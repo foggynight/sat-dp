@@ -3,7 +3,6 @@
 
 module Main where
 
-import Data.Array (Array, listArray, (!))
 import Data.Char (toLower)
 import Data.IORef
 import Debug.Trace (trace)
@@ -15,39 +14,84 @@ import DIMACS
 import Util
 import VarOrder
 
+-- Pure Literal Elimination ----------------------------------------------------
+
+data Polarity = Pol_None | Pol_Conflict | Pol_Positive | Pol_Negative
+  deriving (Eq, Show)
+
+varPolClause :: Clause -> Variable -> Polarity
+varPolClause clause var
+  | has_pos && has_neg = Pol_Conflict
+  | has_pos            = Pol_Positive
+  | has_neg            = Pol_Negative
+  | otherwise          = Pol_None
+  where has_pos = clauseHasLit var clause
+        has_neg = clauseHasLit (-var) clause
+
+mergePol :: Polarity -> Polarity -> Polarity
+mergePol Pol_Conflict _ = Pol_Conflict
+mergePol _ Pol_Conflict = Pol_Conflict
+mergePol p1 Pol_None = p1
+mergePol Pol_None p2 = p2
+mergePol p1 p2 = if p1 == p2 then p1 else Pol_Conflict
+
+varPolClauses :: [Clause] -> Variable -> Polarity
+varPolClauses [] _ = Pol_None
+varPolClauses (c:cs) var  =
+  let pol = varPolClause c var
+  in if pol == Pol_Conflict
+     then pol
+     else mergePol pol $ varPolClauses cs var
+
+-- Pure Literal Elimination: Find literals which are pure (only positive or only
+-- negative), and eliminate clauses which contain a pure literal.
+pureLitElim :: Variable -> [Clause] -> ([Literal], [Clause])
+pureLitElim max_var clauses =
+  let pure_lits =
+        map (\(var, pol) -> if pol == Pol_Positive then var else (-var))
+            $ filter (\(_, pol) -> pol == Pol_Positive || pol == Pol_Negative)
+                     [(var, varPolClauses clauses var) | var <- [1..max_var]]
+      impure_clauses =
+        filter (not . clauseHasLitAny pure_lits) clauses
+  in (pure_lits, impure_clauses)
+
 -- DPLL ------------------------------------------------------------------------
 
 {-# NOINLINE dpll_count #-}
 dpll_count :: IORef Int
 dpll_count = unsafePerformIO (newIORef 0)
 
-dpll :: Array Int Variable -> [Clause] -> Int -> IO (Maybe [Literal])
-dpll _ [] _ = do
+dpll :: [Variable] -> [Clause] -> Int -> IO (Maybe [Literal])
+dpll [] [] _ = do
   modifyIORef' dpll_count (+ 1)
+  putStr " => SOLUTION (empty formula)"
   pure $ Just []
-dpll var_order clauses depth = do
-  let print_prefix = concat $ replicate (depth - 1) "    "
+dpll vars clauses depth = do
+  let print_prefix = '\n' : (concat $ replicate (depth - 1) "    ")
   if elem [] clauses
-  then do putStrLn (print_prefix ++ "BACKTRACK: Found empty clause.")
+  then do putStr (" => BACKTRACK (empty clause)")
           modifyIORef' dpll_count (+ 1)
           pure Nothing
-  else do
-    let var = var_order ! depth
+  else case vars of
+         [] -> error $ "error: no variable to split but clauses remain: "
+                    ++ show clauses
+         (v:vs) -> dpll' v vs print_prefix
+  where
+    dpll' v vs print_prefix = do
+      let clauses_pos = (conditionClauses v clauses)
+      putStr $ concat [print_prefix, "+", show v, " -> ", show clauses_pos]
+      next_pos <- dpll vs clauses_pos (depth + 1)
 
-    let clauses_pos = (conditionClauses var clauses)
-    putStrLn $ concat [print_prefix, " ", show var, " -> ", show clauses_pos]
-    next_pos <- dpll var_order clauses_pos (depth + 1)
+      if next_pos /= Nothing
+      then pure $ Just v `consM` next_pos
+      else do
+        let clauses_neg = (conditionClauses (-v) clauses)
+        putStr $ concat [print_prefix, show (-v), " -> ", show clauses_neg]
+        next_neg <- dpll vs clauses_neg (depth + 1)
 
-    if next_pos /= Nothing
-    then pure $ Just var `consM` next_pos
-    else do
-      let clauses_neg = (conditionClauses (-var) clauses)
-      putStrLn $ concat [print_prefix, show (-var), " -> ", show clauses_neg]
-      next_neg <- dpll var_order clauses_neg (depth + 1)
-
-      if next_neg /= Nothing
-      then pure $ Just (-var) `consM` next_neg
-      else pure $ Nothing
+        if next_neg /= Nothing
+        then pure $ Just (-v) `consM` next_neg
+        else pure $ Nothing
 
 solve_dpll :: CNF -> [Variable] -> IO ()
 solve_dpll cnf var_order = do
@@ -57,18 +101,23 @@ solve_dpll cnf var_order = do
   putStrLn $ "Variable Order: " ++ show var_order
   newline
 
-  putStrLn $ "Searching for satisfying assignment..."
-  result <- dpll
-        (listArray (1, (cnf_n_vars cnf)) var_order)
-        (cnf_clauses cnf)
-        1
+  putStrLn "Pure literal elimination..."
+  let (pure_lits, impure_clauses) =
+        pureLitElim (cnf_n_vars cnf) (cnf_clauses cnf)
+  putStrLn $ "Pure Literals:     " ++ show pure_lits
+  putStrLn $ "Remaining clauses: " ++ show impure_clauses
+  newline
+
+  putStr $ "Searching for satisfying assignment..."
+  let impure_vars = filter (\v -> not $ elem v $ map abs pure_lits) var_order
+  result <- dpll impure_vars impure_clauses 1
   dpll_count' <- readIORef dpll_count
-  putStrLn $ "Assignments checked: " ++ show dpll_count'
+  putStrLn $ "\nBranches checked: " ++ show dpll_count'
   newline
 
   case result of
     Nothing   -> putStrLn "UNSAT"
-    Just lits -> putStrLn $ "SAT: " ++ show lits
+    Just lits -> putStrLn $ "SAT: " ++ show (pure_lits ++ lits)
 
 -- Main ------------------------------------------------------------------------
 

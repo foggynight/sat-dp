@@ -15,6 +15,13 @@ instance Show CNF where
 litHasVar :: Variable -> Literal -> Bool
 litHasVar var lit = (var == abs lit)
 
+clauseHasLit :: Literal -> Clause -> Bool
+clauseHasLit = elem
+
+clauseHasLitAny :: [Literal] -> Clause -> Bool
+clauseHasLitAny [] _ = False
+clauseHasLitAny (l:ls) c = elem l c || clauseHasLitAny ls c
+
 -- When called with var = 0, checks if clause is the empty clause.
 clauseHasVar :: Variable -> Clause -> Bool
 clauseHasVar 0 clause = (clause == [])
