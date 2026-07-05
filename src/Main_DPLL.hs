@@ -101,35 +101,44 @@ unitClauseProp prefix clauses = do
 dpll_count :: IORef Int
 dpll_count = unsafePerformIO (newIORef 0)
 
-dpll_print :: String -> Variable -> [Clause] -> IO ()
-dpll_print prefix var clauses =
+dpll_backtrack :: IO (Maybe [Literal])
+dpll_backtrack = do
+  putStr " => BACKTRACK (empty clause)"
+  modifyIORef' dpll_count (+ 1)
+  pure Nothing
+
+dpll_solution :: IO (Maybe [Literal])
+dpll_solution = do
+  putStr " => SOLUTION (empty formula)"
+  modifyIORef' dpll_count (+ 1)
+  pure $ Just []
+
+dpll_msg_split :: String -> Variable -> [Clause] -> IO ()
+dpll_msg_split prefix var clauses =
   putStr $ concat [prefix, "Assign Lit: ", show var, " -> CNF: ", show clauses]
 
 dpll :: [Variable] -> [Clause] -> Int -> IO (Maybe [Literal])
-dpll [] [] _ = do
-  modifyIORef' dpll_count (+ 1)
-  putStr " => SOLUTION (empty formula)"
-  pure $ Just []
-dpll vars clauses depth = do
+dpll [] [] _ = dpll_solution
+dpll [] clauses _ =
   if elem [] clauses
-  then do putStr " => BACKTRACK (empty clause)"
-          modifyIORef' dpll_count (+ 1)
-          pure Nothing
-  else case vars of
-         [] -> error $ "error: no variable to split but clauses remain: "
-                    ++ show clauses
-         (v:vs) -> do (lits, cs) <- unitClauseProp print_prefix clauses
-                      if null lits
-                      then splitOnVar v vs clauses
-                      else do maybe_lits <- dpll ((v:vs) \\ lits) cs (depth + 1)
-                              pure $ Just lits `appendM` maybe_lits
+  then dpll_backtrack
+  else error $ "error: all variables assigned but clauses remain: "
+            ++ show clauses
+dpll (var:vars) clauses depth = do
+  if elem [] clauses
+  then dpll_backtrack
+  else do (lits, cs) <- unitClauseProp print_prefix clauses
+          if True || null lits
+          then splitOnVar var vars clauses
+          else do maybe_lits <- dpll ((var:vars) \\ lits) cs (depth + 1)
+                  pure $ Just lits `appendM` maybe_lits
   where
     print_prefix = "\n[Depth " ++ show depth ++ "] "
     splitOnVar :: Variable -> [Variable] -> [Clause] -> IO (Maybe [Literal])
     splitOnVar v vs cs = do
       -- Check positive v branch.
       let cs_pos = (conditionClauses v cs)
-      dpll_print print_prefix v cs_pos
+      dpll_msg_split print_prefix v cs_pos
       next_pos <- dpll vs cs_pos (depth + 1)
 
       if next_pos /= Nothing
@@ -137,7 +146,7 @@ dpll vars clauses depth = do
       else do
         -- Check negative v branch.
         let cs_neg = (conditionClauses (-v) cs)
-        dpll_print print_prefix (-v) cs_neg
+        dpll_msg_split print_prefix (-v) cs_neg
         next_neg <- dpll vs cs_neg (depth + 1)
 
         if next_neg /= Nothing
