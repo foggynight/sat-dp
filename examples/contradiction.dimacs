@@ -1,0 +1,6 @@
+c Demonstration of two clauses which form a contradiction.
+
+p cnf 1 2
+
+1 0
+-1 0

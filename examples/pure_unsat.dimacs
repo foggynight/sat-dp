@@ -1,0 +1,9 @@
+c Demonstration of pure literal elimination on an unsatisfiable formula.
+
+p cnf 3 5
+
+1 0
+1 2 0
+-2 0
+-3 0
+2 3 0

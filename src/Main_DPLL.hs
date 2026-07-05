@@ -1,6 +1,8 @@
 -- -*- eval: (setq haskell-process-args-cabal-repl '("sat-dpll")) -*-
 -- ... or: M-x haskell-session-change-target, sat-dpll
 
+-- TODO: Add simplify rule: [1, ..., -1] => TRUE
+
 module Main where
 
 import Data.Char (toLower)
@@ -69,7 +71,7 @@ pureLitElimRecM max_var clauses = do
   then pure ([], clauses)
   else do
     putStrLn $ concat
-      ["[PLE] Lits: ", show pure_lits, " -> CNF: ", show impure_clauses]
+      ["[PLE] Pure Lits: ", show pure_lits, " -> CNF: ", show impure_clauses]
     (rec_pls, rec_ics) <- pureLitElimRecM max_var impure_clauses
     pure (pure_lits ++ rec_pls, rec_ics)
 

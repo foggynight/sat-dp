@@ -25,7 +25,8 @@ data Resolvent = Resolvent
 
 instance Show Resolvent where
   show (Resolvent p1 p2 res) =
-    concat [(show p1), " ", (show p2), " -> ", (show res)]
+    concat [ "Clauses: ", (show p1), ", ", (show p2)
+           , " -> Resolvent: ", (show res)]
 
 -- Generate var-resolvent given two clauses. Removes duplicate literals.
 resolve :: Variable -> Clause -> Clause -> Maybe Resolvent

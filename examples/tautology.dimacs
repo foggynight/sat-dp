@@ -1,0 +1,6 @@
+c Demonstration of simplification of tautological clause, that is, a clause
+c which contains both positive and negative literal of a single variable.
+
+p cnf 1 1
+
+1 -1 0
