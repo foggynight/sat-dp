@@ -60,7 +60,7 @@ pureLitElimRecM max_var clauses = do
   if pure_lits == []
   then pure ([], clauses)
   else do
-    putStrLn $ show pure_lits ++ " -> " ++ show impure_clauses
+    putStrLn $ concat ["[PLE] Lits: ", show pure_lits, " -> CNF: ", show impure_clauses]
     (rec_pls, rec_ics) <- pureLitElimRecM max_var impure_clauses
     pure (pure_lits ++ rec_pls, rec_ics)
 
@@ -72,13 +72,16 @@ pureLitElimRecM max_var clauses = do
 dpll_count :: IORef Int
 dpll_count = unsafePerformIO (newIORef 0)
 
+dpll_print :: String -> Variable -> [Clause] -> IO ()
+dpll_print prefix var clauses =
+  putStr $ concat [prefix, "Lit: ", show var, " -> CNF: ", show clauses]
+
 dpll :: [Variable] -> [Clause] -> Int -> IO (Maybe [Literal])
 dpll [] [] _ = do
   modifyIORef' dpll_count (+ 1)
   putStr " => SOLUTION (empty formula)"
   pure $ Just []
 dpll vars clauses depth = do
-  let print_prefix = '\n' : (concat $ replicate depth "    ")
   if elem [] clauses
   then do putStr " => BACKTRACK (empty clause)"
           modifyIORef' dpll_count (+ 1)
@@ -86,18 +89,19 @@ dpll vars clauses depth = do
   else case vars of
          [] -> error $ "error: no variable to split but clauses remain: "
                     ++ show clauses
-         (v:vs) -> dpll' v vs print_prefix
+         (v:vs) -> dpll' v vs
   where
-    dpll' v vs print_prefix = do
+    print_prefix = "\n[Depth " ++ show depth ++ "] "
+    dpll' v vs = do
       let clauses_pos = (conditionClauses v clauses)
-      putStr $ concat [print_prefix, "+", show v, " -> ", show clauses_pos]
+      dpll_print print_prefix v clauses_pos
       next_pos <- dpll vs clauses_pos (depth + 1)
 
       if next_pos /= Nothing
       then pure $ Just v `consM` next_pos
       else do
         let clauses_neg = (conditionClauses (-v) clauses)
-        putStr $ concat [print_prefix, show (-v), " -> ", show clauses_neg]
+        dpll_print print_prefix (-v) clauses_neg
         next_neg <- dpll vs clauses_neg (depth + 1)
 
         if next_neg /= Nothing
@@ -112,21 +116,27 @@ solve_dpll (CNF n_vars _ clauses) var_order = do
   putStrLn $ "Variable Order: " ++ show var_order
   newline
 
-  putStrLn "Pure literal elimination..."
+  putStrLn "Performing pure literal elimination..."
   (pure_lits, impure_clauses) <- pureLitElimRecM n_vars clauses
   let impure_vars = filter (\v -> not $ elem v $ map abs pure_lits) var_order
+  putStrLn $ "Pure Literals Found: " ++ (show $ length pure_lits)
   newline
 
   putStrLn $ "Assigned Literals:   " ++ show pure_lits
   putStrLn $ "Remaining Variables: " ++ show impure_vars
-  putStrLn $ "Remaining Clauses:   " ++ show impure_clauses
+  putStrLn $ "Current CNF:         " ++ show impure_clauses
   newline
 
-  putStr $ "Searching for satisfying assignment..."
-  result <- dpll impure_vars impure_clauses 0
-  dpll_count' <- readIORef dpll_count
-  putStrLn $ "\nBranches checked: " ++ show dpll_count'
-  newline
+  result <-
+    if impure_clauses == []
+    then do pure $ Just []
+    else do
+      putStr $ "Searching for satisfying assignment..."
+      result <- dpll impure_vars impure_clauses 0
+      dpll_count' <- readIORef dpll_count
+      putStrLn $ "\nTerminal nodes checked: " ++ show dpll_count'
+      newline
+      pure result
 
   case result of
     Nothing   -> putStrLn "UNSAT"
