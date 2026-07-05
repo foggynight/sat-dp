@@ -10,3 +10,6 @@ count x = length . filter (== x)
 
 consM :: Monad m => m a -> m [a] -> m [a]
 consM = liftM2 (:)
+
+appendM :: Monad m => m [a] -> m [a] -> m [a]
+appendM = liftM2 (++)

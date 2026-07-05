@@ -37,6 +37,13 @@ conditionClause lit clause
   | elem lit clause = Nothing
   | otherwise       = Just $ filter (/= -lit) clause
 
+conditionClauseLits :: [Literal] -> Clause -> Maybe Clause
+conditionClauseLits [] clause = Just clause
+conditionClauseLits (lit:lits) clause =
+  case conditionClause lit clause of
+    Nothing -> Nothing
+    Just c  -> conditionClauseLits lits c
+
 conditionClauses :: Literal -> [Clause] -> [Clause]
 conditionClauses _ [] = []
 conditionClauses lit (c:cs) =

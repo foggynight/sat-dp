@@ -3,8 +3,10 @@
 
 module Main where
 
+import Control.Monad (when)
 import Data.Char (toLower)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
+import Data.Maybe (mapMaybe)
 import Debug.Trace (trace)
 import Options.Applicative
 import System.IO.Unsafe (unsafePerformIO)
@@ -19,6 +21,16 @@ import VarOrder
 data Polarity = Pol_None | Pol_Conflict | Pol_Positive | Pol_Negative
   deriving (Eq, Show)
 
+-- Merge two polarities, ignores Pol_None, propagates Pol_Conflict, returns
+-- given polarity when both are equal.
+mergePol :: Polarity -> Polarity -> Polarity
+mergePol Pol_Conflict _ = Pol_Conflict
+mergePol _ Pol_Conflict = Pol_Conflict
+mergePol p1 Pol_None = p1
+mergePol Pol_None p2 = p2
+mergePol p1 p2 = if p1 == p2 then p1 else Pol_Conflict
+
+-- Determine the polarity of a variable in a clause.
 varPolClause :: Clause -> Variable -> Polarity
 varPolClause clause var
   | has_pos && has_neg = Pol_Conflict
@@ -28,13 +40,7 @@ varPolClause clause var
   where has_pos = clauseHasLit var clause
         has_neg = clauseHasLit (-var) clause
 
-mergePol :: Polarity -> Polarity -> Polarity
-mergePol Pol_Conflict _ = Pol_Conflict
-mergePol _ Pol_Conflict = Pol_Conflict
-mergePol p1 Pol_None = p1
-mergePol Pol_None p2 = p2
-mergePol p1 p2 = if p1 == p2 then p1 else Pol_Conflict
-
+-- Determine the polarity of a variable in a list of clauses.
 varPolClauses :: [Clause] -> Variable -> Polarity
 varPolClauses [] _ = Pol_None
 varPolClauses (c:cs) var  =
@@ -54,17 +60,38 @@ pureLitElim max_var clauses =
         has_pol = \(_, pol) -> pol == Pol_Positive || pol == Pol_Negative
         var_pol_lit = \(var, pol) -> if pol == Pol_Positive then var else (-var)
 
+-- Perform pure literal elimination recursively until no more pure literals are
+-- found. IO to print log messages.
 pureLitElimRecM :: Variable -> [Clause] -> IO ([Literal], [Clause])
 pureLitElimRecM max_var clauses = do
   let (pure_lits, impure_clauses) = pureLitElim max_var clauses
   if pure_lits == []
   then pure ([], clauses)
   else do
-    putStrLn $ concat ["[PLE] Lits: ", show pure_lits, " -> CNF: ", show impure_clauses]
+    putStrLn $ concat
+      ["[PLE] Lits: ", show pure_lits, " -> CNF: ", show impure_clauses]
     (rec_pls, rec_ics) <- pureLitElimRecM max_var impure_clauses
     pure (pure_lits ++ rec_pls, rec_ics)
 
 -- Unit Clause Propagation -----------------------------------------------------
+
+-- Determine if clause contains unit literal (single unassigned literal), and
+-- return Maybe literal representing the unit literal.
+clauseUnitLit :: Clause -> Maybe Literal
+clauseUnitLit [] = Nothing
+clauseUnitLit [lit] = Just lit
+clauseUnitLit (lit:lits)
+  | null $ filter (/= lit) lits = Just lit
+  | otherwise                   = Nothing
+
+unitClauseProp :: String -> [Clause] -> IO ([Literal], [Clause])
+unitClauseProp prefix clauses = do
+  let unit_lits = mapMaybe clauseUnitLit clauses
+      new_clauses = mapMaybe (conditionClauseLits unit_lits) clauses
+  when (not $ null unit_lits) $
+    putStr $ concat
+      [prefix, "Unit Lits: ", show unit_lits, " -> CNF: ", show new_clauses]
+  pure (unit_lits, new_clauses)
 
 -- DPLL ------------------------------------------------------------------------
 
@@ -74,7 +101,7 @@ dpll_count = unsafePerformIO (newIORef 0)
 
 dpll_print :: String -> Variable -> [Clause] -> IO ()
 dpll_print prefix var clauses =
-  putStr $ concat [prefix, "Lit: ", show var, " -> CNF: ", show clauses]
+  putStr $ concat [prefix, "Assign Lit: ", show var, " -> CNF: ", show clauses]
 
 dpll :: [Variable] -> [Clause] -> Int -> IO (Maybe [Literal])
 dpll [] [] _ = do
@@ -89,20 +116,25 @@ dpll vars clauses depth = do
   else case vars of
          [] -> error $ "error: no variable to split but clauses remain: "
                     ++ show clauses
-         (v:vs) -> dpll' v vs
+         (v:vs) -> do (lits, cs) <- unitClauseProp print_prefix clauses
+                      maybe_lits <- splitOnVar v vs cs
+                      pure $ Just lits `appendM` maybe_lits
   where
     print_prefix = "\n[Depth " ++ show depth ++ "] "
-    dpll' v vs = do
-      let clauses_pos = (conditionClauses v clauses)
-      dpll_print print_prefix v clauses_pos
-      next_pos <- dpll vs clauses_pos (depth + 1)
+    splitOnVar :: Variable -> [Variable] -> [Clause] -> IO (Maybe [Literal])
+    splitOnVar v vs cs = do
+      -- Check positive v branch.
+      let cs_pos = (conditionClauses v cs)
+      dpll_print print_prefix v cs_pos
+      next_pos <- dpll vs cs_pos (depth + 1)
 
       if next_pos /= Nothing
       then pure $ Just v `consM` next_pos
       else do
-        let clauses_neg = (conditionClauses (-v) clauses)
-        dpll_print print_prefix (-v) clauses_neg
-        next_neg <- dpll vs clauses_neg (depth + 1)
+        -- Check negative v branch.
+        let cs_neg = (conditionClauses (-v) cs)
+        dpll_print print_prefix (-v) cs_neg
+        next_neg <- dpll vs cs_neg (depth + 1)
 
         if next_neg /= Nothing
         then pure $ Just (-v) `consM` next_neg
