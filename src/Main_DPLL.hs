@@ -117,21 +117,21 @@ dpll_msg_split :: String -> Variable -> [Clause] -> IO ()
 dpll_msg_split prefix var clauses =
   putStr $ concat [prefix, "Assign Lit: ", show var, " -> CNF: ", show clauses]
 
-dpll :: [Variable] -> [Clause] -> Int -> IO (Maybe [Literal])
-dpll [] [] _ = dpll_solution
-dpll [] clauses _ =
-  if elem [] clauses
-  then dpll_backtrack
-  else error $ "error: all variables assigned but clauses remain: "
-            ++ show clauses
-dpll (var:vars) clauses depth = do
-  if elem [] clauses
-  then dpll_backtrack
-  else do (lits, cs) <- unitClauseProp print_prefix clauses
-          if True || null lits
-          then splitOnVar var vars clauses
-          else do maybe_lits <- dpll ((var:vars) \\ lits) cs (depth + 1)
-                  pure $ Just lits `appendM` maybe_lits
+dpll :: Config -> [Variable] -> [Clause] -> Int -> IO (Maybe [Literal])
+dpll _ [] [] _ = dpll_solution
+dpll _ [] clauses _
+  | elem [] clauses = dpll_backtrack
+  | otherwise = error $ "error: all variables assigned but clauses remain: "
+                     ++ show clauses
+dpll conf (var:vars) clauses depth
+  | elem [] clauses = dpll_backtrack
+  | (conf_UCP conf) = do
+      (lits, cs) <- unitClauseProp print_prefix clauses
+      if null lits
+      then splitOnVar var vars clauses
+      else do maybe_lits <- dpll conf ((var:vars) \\ lits) cs (depth + 1)
+              pure $ Just lits `appendM` maybe_lits
+  | otherwise = splitOnVar var vars clauses
   where
     print_prefix = "\n[Depth " ++ show depth ++ "] "
     splitOnVar :: Variable -> [Variable] -> [Clause] -> IO (Maybe [Literal])
@@ -139,7 +139,7 @@ dpll (var:vars) clauses depth = do
       -- Check positive v branch.
       let cs_pos = (conditionClauses v cs)
       dpll_msg_split print_prefix v cs_pos
-      next_pos <- dpll vs cs_pos (depth + 1)
+      next_pos <- dpll conf vs cs_pos (depth + 1)
 
       if next_pos /= Nothing
       then pure $ Just v `consM` next_pos
@@ -147,37 +147,43 @@ dpll (var:vars) clauses depth = do
         -- Check negative v branch.
         let cs_neg = (conditionClauses (-v) cs)
         dpll_msg_split print_prefix (-v) cs_neg
-        next_neg <- dpll vs cs_neg (depth + 1)
+        next_neg <- dpll conf vs cs_neg (depth + 1)
 
         if next_neg /= Nothing
         then pure $ Just (-v) `consM` next_neg
         else pure $ Nothing
 
-solve_dpll :: CNF -> [Variable] -> IO ()
-solve_dpll (CNF n_vars _ clauses) var_order = do
+solve_dpll :: Config -> CNF -> [Variable] -> IO ()
+solve_dpll conf (CNF n_vars _ clauses) var_order = do
   putStrLn $ "Initial CNF: " ++ show clauses
   newline
 
   putStrLn $ "Variable Order: " ++ show var_order
   newline
 
-  putStrLn "Performing pure literal elimination..."
-  (pure_lits, impure_clauses) <- pureLitElimRecM n_vars clauses
-  let impure_vars = filter (\v -> not $ elem v $ map abs pure_lits) var_order
-  putStrLn $ "Pure Literals Found: " ++ (show $ length pure_lits)
-  newline
+  (assigned_lits, remaining_vars, current_clauses) <- do
+    if (conf_PLE conf)
+    then do
+      putStrLn "Performing pure literal elimination..."
+      (pure_lits, impure_clauses) <- pureLitElimRecM n_vars clauses
+      putStrLn $ "Pure Literals Found: " ++ (show $ length pure_lits)
+      newline
+      pure ( pure_lits
+           , filter (\v -> not $ elem v $ map abs pure_lits) var_order
+           , impure_clauses )
+    else pure ([], var_order, clauses)
 
-  putStrLn $ "Assigned Literals:   " ++ show pure_lits
-  putStrLn $ "Remaining Variables: " ++ show impure_vars
-  putStrLn $ "Current CNF:         " ++ show impure_clauses
+  putStrLn $ "Assigned Literals:   " ++ show assigned_lits
+  putStrLn $ "Remaining Variables: " ++ show remaining_vars
+  putStrLn $ "Current CNF:         " ++ show current_clauses
   newline
 
   result <-
-    if impure_clauses == []
+    if current_clauses == []
     then do pure $ Just []
     else do
       putStr $ "Searching for satisfying assignment..."
-      result <- dpll impure_vars impure_clauses 0
+      result <- dpll conf remaining_vars current_clauses 0
       dpll_count' <- readIORef dpll_count
       putStrLn $ "\nTerminal nodes checked: " ++ show dpll_count'
       newline
@@ -185,41 +191,56 @@ solve_dpll (CNF n_vars _ clauses) var_order = do
 
   case result of
     Nothing   -> putStrLn "UNSAT"
-    Just lits -> putStrLn $ "SAT: " ++ show (pure_lits ++ lits)
+    Just lits -> putStrLn $ "SAT: " ++ show (assigned_lits ++ lits)
 
 -- Main ------------------------------------------------------------------------
 
 data Config = Config
-  { conf_var_order :: String
-  , conf_cnf_file :: String
+  { conf_cnf_file :: String
+  , conf_var_order :: String
+  , conf_PLE :: Bool
+  , conf_UCP :: Bool
   } deriving (Show)
 
+-- TODO: Make flags case-insensitive?
 configParser :: Parser Config
 configParser = Config
-  <$> strOption
+  <$> strArgument
+  ( metavar "CNF_FILE"
+    <> value "--"
+    <> showDefault
+    <> help "Filename of input DIMACS CNF file." )
+  <*> strOption
   ( short 'R'
     <> long "order"
     <> value "numeric"
     <> showDefault
     <> help "Variable ordering strategy." )
-  <*> strArgument
-  ( metavar "CNF_FILE"
-    <> value "--"
+  <*> switch
+  ( short 'p'
+    <> long "ple"
+    -- <> value False
     <> showDefault
-    <> help "Filename of input DIMACS CNF file." )
+    <> help "Perform pure literal elimination ." )
+  <*> switch
+  ( short 'u'
+    <> long "ucp"
+    -- <> value False
+    <> showDefault
+    <> help "Perform unit clause propagation at each node of DPLL search tree." )
 
 main :: IO ()
 main = do
-  config <- execParser opts
+  conf <- execParser opts
 
-  let vo_func = case map toLower (conf_var_order config) of
+  let vo_func = case map toLower (conf_var_order conf) of
                   "numeric" -> varOrderNumeric
                   "fewest"  -> varOrderFewestClauses
                   "jw"      -> varOrderJeroslowWang
                   _         -> trace "error: invalid variable order argument"
                                      varOrderNumeric
 
-  dimacs_cnf <- case conf_cnf_file config of
+  dimacs_cnf <- case conf_cnf_file conf of
                   "--" -> getContents
                   file -> readFile file
 
@@ -228,7 +249,7 @@ main = do
     Nothing  -> putStrLn "error: invalid CNF"
     Just cnf -> do
       let var_order = vo_func cnf
-      solve_dpll cnf var_order
+      solve_dpll conf cnf var_order
 
   where opts = info (configParser <**> helper)
                ( fullDesc
