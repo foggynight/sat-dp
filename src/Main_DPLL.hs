@@ -6,6 +6,7 @@ module Main where
 import Control.Monad (when)
 import Data.Char (toLower)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
+import Data.List ((\\))
 import Data.Maybe (mapMaybe)
 import Debug.Trace (trace)
 import Options.Applicative
@@ -75,8 +76,7 @@ pureLitElimRecM max_var clauses = do
 
 -- Unit Clause Propagation -----------------------------------------------------
 
--- Determine if clause contains unit literal (single unassigned literal), and
--- return Maybe literal representing the unit literal.
+-- Determine if clause contains unit a literal.
 clauseUnitLit :: Clause -> Maybe Literal
 clauseUnitLit [] = Nothing
 clauseUnitLit [lit] = Just lit
@@ -84,6 +84,8 @@ clauseUnitLit (lit:lits)
   | null $ filter (/= lit) lits = Just lit
   | otherwise                   = Nothing
 
+-- Search for unit literals (single unassigned literal in a clause), and
+-- condition formula over each literal.
 unitClauseProp :: String -> [Clause] -> IO ([Literal], [Clause])
 unitClauseProp prefix clauses = do
   let unit_lits = mapMaybe clauseUnitLit clauses
@@ -117,8 +119,10 @@ dpll vars clauses depth = do
          [] -> error $ "error: no variable to split but clauses remain: "
                     ++ show clauses
          (v:vs) -> do (lits, cs) <- unitClauseProp print_prefix clauses
-                      maybe_lits <- splitOnVar v vs cs
-                      pure $ Just lits `appendM` maybe_lits
+                      if null lits
+                      then splitOnVar v vs clauses
+                      else do maybe_lits <- dpll ((v:vs) \\ lits) cs (depth + 1)
+                              pure $ Just lits `appendM` maybe_lits
   where
     print_prefix = "\n[Depth " ++ show depth ++ "] "
     splitOnVar :: Variable -> [Variable] -> [Clause] -> IO (Maybe [Literal])
