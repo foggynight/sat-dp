@@ -16,6 +16,7 @@ import Util
 import VarOrder
 
 -- Resolution ------------------------------------------------------------------
+
 data Resolvent = Resolvent
   { _res_p1 :: Clause   -- parent 1
   , _res_p2 :: Clause   -- parent 2
