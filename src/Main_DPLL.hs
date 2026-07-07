@@ -5,6 +5,7 @@
 
 module Main where
 
+import Control.Monad (when)
 import Data.Char (toLower)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.List ((\\))
@@ -22,6 +23,10 @@ import VarOrder
 
 data Polarity = Pol_None | Pol_Conflict | Pol_Positive | Pol_Negative
   deriving (Eq, Show)
+
+{-# NOINLINE ple_count #-}
+ple_count :: IORef Int
+ple_count = unsafePerformIO (newIORef 0)
 
 -- Merge two polarities, ignores Pol_None, propagates Pol_Conflict, returns
 -- given polarity when both are equal.
@@ -70,12 +75,17 @@ pureLitElimRecM max_var clauses = do
   if pure_lits == []
   then pure ([], clauses)
   else do
+    modifyIORef' ple_count (+ length pure_lits)
     putStrLn $ concat
       ["[PLE] Pure Lits: ", show pure_lits, " -> CNF: ", show impure_clauses]
     (rec_pls, rec_ics) <- pureLitElimRecM max_var impure_clauses
     pure (pure_lits ++ rec_pls, rec_ics)
 
 -- Unit Clause Propagation -----------------------------------------------------
+
+{-# NOINLINE unit_count #-}
+unit_count :: IORef Int
+unit_count = unsafePerformIO (newIORef 0)
 
 -- Determine if clause contains unit a literal.
 clauseUnitLit :: Clause -> Maybe Literal
@@ -98,6 +108,7 @@ unitClauseProp prefix clauses = do
   case firstUnitLit clauses of
     Nothing       -> pure ([], clauses)
     Just unit_lit -> do
+      modifyIORef' unit_count (+ 1)
       let cond_clauses = mapMaybe (conditionClause unit_lit) clauses
       putStr $ concat
         [prefix, "Unit Lit: ", show unit_lit, " -> CNF: ", show cond_clauses]
@@ -110,30 +121,32 @@ unitClauseProp prefix clauses = do
 dpll_count :: IORef Int
 dpll_count = unsafePerformIO (newIORef 0)
 
-dpll_backtrack :: IO (Maybe [Literal])
-dpll_backtrack = do
+-- TODO: Fix function names here.
+
+dpllBacktrack :: IO (Maybe [Literal])
+dpllBacktrack = do
   putStr " => BACKTRACK (empty clause)"
   modifyIORef' dpll_count (+ 1)
   pure Nothing
 
-dpll_solution :: IO (Maybe [Literal])
-dpll_solution = do
+dpllSolution :: IO (Maybe [Literal])
+dpllSolution = do
   putStr " => SOLUTION (empty formula)"
   modifyIORef' dpll_count (+ 1)
   pure $ Just []
 
-dpll_msg_split :: String -> Variable -> [Clause] -> IO ()
-dpll_msg_split prefix var clauses =
+dpllMsgSplit :: String -> Variable -> [Clause] -> IO ()
+dpllMsgSplit prefix var clauses =
   putStr $ concat [prefix, "Assign Lit: ", show var, " -> CNF: ", show clauses]
 
 dpll :: Config -> [Variable] -> [Clause] -> Int -> IO (Maybe [Literal])
-dpll _ [] [] _ = dpll_solution
+dpll _ [] [] _ = dpllSolution
 dpll _ [] clauses _
-  | elem [] clauses = dpll_backtrack
+  | elem [] clauses = dpllBacktrack
   | otherwise = error $ "error: all variables assigned but clauses remain: "
                      ++ show clauses
 dpll conf (var:vars) clauses depth
-  | elem [] clauses = dpll_backtrack
+  | elem [] clauses = dpllBacktrack
   | (conf_UCP conf) = do
       (unit_lits, cs) <- unitClauseProp print_prefix clauses
       if null unit_lits
@@ -148,7 +161,7 @@ dpll conf (var:vars) clauses depth
     splitOnVar v vs cs = do
       -- Check positive v branch.
       let cs_pos = (conditionClauses v cs)
-      dpll_msg_split print_prefix v cs_pos
+      dpllMsgSplit print_prefix v cs_pos
       next_pos <- dpll conf vs cs_pos (depth + 1)
 
       if next_pos /= Nothing
@@ -156,7 +169,7 @@ dpll conf (var:vars) clauses depth
       else do
         -- Check negative v branch.
         let cs_neg = (conditionClauses (-v) cs)
-        dpll_msg_split print_prefix (-v) cs_neg
+        dpllMsgSplit print_prefix (-v) cs_neg
         next_neg <- dpll conf vs cs_neg (depth + 1)
 
         if next_neg /= Nothing
@@ -194,10 +207,18 @@ solve_dpll conf (CNF n_vars _ clauses) var_order = do
     else do
       putStr $ "Searching for satisfying assignment..."
       result <- dpll conf remaining_vars current_clauses 0
-      dpll_count' <- readIORef dpll_count
-      putStrLn $ "\nTerminal nodes checked: " ++ show dpll_count'
-      newline
+      putStrLn $ "\nSearch complete!\n"
       pure result
+
+  dpll_count' <- readIORef dpll_count
+  ple_count' <- readIORef ple_count
+  unit_count' <- readIORef unit_count
+  when (conf_PLE conf) $
+    putStrLn $ "Pure literals eliminated: " ++ show ple_count'
+  when (conf_UCP conf) $
+    putStrLn $ "Unit clauses propagated: " ++ show unit_count'
+  putStrLn $ "Terminal nodes checked:  " ++ show dpll_count'
+  newline
 
   case result of
     Nothing   -> putStrLn "UNSAT"
@@ -229,13 +250,11 @@ configParser = Config
   <*> switch
   ( short 'p' <> short 'P'
     <> long "ple" <> long "PLE"
-    -- <> value False
     <> showDefault
     <> help "Perform pure literal elimination ." )
   <*> switch
   ( short 'u' <> short 'U'
     <> long "ucp" <> long "UCP"
-    -- <> value False
     <> showDefault
     <> help "Perform unit clause propagation at each node of DPLL search tree." )
 
