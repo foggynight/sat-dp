@@ -184,17 +184,17 @@ data Config = Config
 
 configParser :: Parser Config
 configParser = Config
-  <$> strOption
+  <$> strArgument
+  ( metavar "CNF_FILE"
+    <> value "--"
+    <> showDefault
+    <> help "Filename of input DIMACS CNF file." )
+  <*> strOption
   ( short 'R'
     <> long "order"
     <> value "numeric"
     <> showDefault
     <> help "Variable ordering strategy." )
-  <*> strArgument
-  ( metavar "CNF_FILE"
-    <> value "--"
-    <> showDefault
-    <> help "Filename of input DIMACS CNF file." )
 
 main :: IO ()
 main = do
